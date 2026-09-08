@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCL Files</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --card: #ffffff;
+    --border: #e4e2dc;
+    --text: #1a1a1a;
+    --text-secondary: #6b6960;
+    --accent: #185fa5;
+    --danger: #a32d2d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 2rem 1rem;
+  }
+  .container { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 0.25rem; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 1.5rem; }
+  .upload-zone {
+    background: var(--card);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    margin-bottom: 1.5rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: #f0f6fc; }
+  .upload-zone input { display: none; }
+  .upload-icon { font-size: 28px; margin-bottom: 8px; }
+  .upload-label { font-size: 15px; color: var(--text-secondary); margin-bottom: 14px; }
+  .upload-label strong { color: var(--accent); }
+  .upload-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .upload-btn:hover { opacity: 0.9; }
+  .upload-item { font-size: 13px; color: var(--text-secondary); margin-top: 4px; text-align: left; }
+  .upload-item.ok { color: #0f6e56; }
+  .upload-item.error { color: var(--danger); }
+  .file-list { display: flex; flex-direction: column; gap: 8px; }
+  .file-row {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .file-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .file-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: #e6f1fb; color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .file-icon.ppt { background: #faece7; color: #993c1d; }
+  .file-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-meta { font-size: 12px; color: var(--text-secondary); }
+  .file-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .btn:hover { background: var(--bg); }
+  .btn.danger { color: var(--danger); }
+  .empty { text-align: center; color: var(--text-secondary); font-size: 14px; padding: 2rem 0; }
+  .status { font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .status.error { color: var(--danger); }
+  .status.ok { color: #0f6e56; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>SCL Files</h1>
+  <p class="subtitle">Shared PDFs and presentations — anyone with this link can view, upload, or delete.</p>
+
+  <div class="upload-zone" id="dropzone">
+    <input type="file" id="fileInput" accept=".pdf,.ppt,.pptx" multiple />
+    <div class="upload-icon">📄</div>
+    <div class="upload-label">Drag files here, or</div>
+    <button type="button" class="upload-btn" id="uploadBtn">Choose files to upload</button>
+    <div id="progress"></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="file-list" id="fileList">
+    <div class="empty">Loading files…</div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = "https://kfpgmtywbjxwutkadniv.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IHW5B0x-iEOdlDqvSAJnkQ_ibioO4PJ";
+  const BUCKET = "files";
+
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const fileInput = document.getElementById('fileInput');
+  const dropzone = document.getElementById('dropzone');
+  const fileList = document.getElementById('fileList');
+  const statusEl = document.getElementById('status');
+  const progressEl = document.getElementById('progress');
+
+  function setStatus(msg, type) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+    if (msg) setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'status'; }, 4000);
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes) return '0 KB';
+    const kb = bytes / 1024;
+    if (kb < 1024) return Math.round(kb) + ' KB';
+    return (kb / 1024).toFixed(1) + ' MB';
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function iconFor(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    if (ext === 'pdf') return { label: 'PDF', cls: '' };
+    return { label: 'PPT', cls: 'ppt' };
+  }
+
+  async function loadFiles() {
+    const { data, error } = await supabaseClient.storage.from(BUCKET).list('', {
+      sortBy: { column: 'created_at', order: 'desc' }
+    });
+
+    if (error) {
+      fileList.innerHTML = '<div class="empty">Could not load files. Check your Supabase config.</div>';
+      return;
+    }
+
+    const files = (data || []).filter(f => f.name !== '.emptyFolderPlaceholder');
+
+    if (files.length === 0) {
+      fileList.innerHTML = '<div class="empty">No files yet — upload your first one above.</div>';
+      return;
+    }
+
+    fileList.innerHTML = '';
+    for (const file of files) {
+      const icon = iconFor(file.name);
+      const size = file.metadata ? file.metadata.size : 0;
+      const row = document.createElement('div');
+      row.className = 'file-row';
+      row.innerHTML = `
+        <div class="file-info">
+          <div class="file-icon ${icon.cls}">${icon.label}</div>
+          <div style="min-width:0;">
+            <div class="file-name">${file.name}</div>
+            <div class="file-meta">${formatBytes(size)} · ${formatDate(file.created_at)}</div>
+          </div>
+        </div>
+        <div class="file-actions">
+          <button class="btn" data-action="download" data-name="${file.name}">Download</button>
+          <button class="btn danger" data-action="delete" data-name="${file.name}">Delete</button>
+        </div>
+      `;
+      fileList.appendChild(row);
+    }
+  }
+
+  fileList.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const name = btn.dataset.name;
+    const action = btn.dataset.action;
+
+    if (action === 'download') {
+      const { data, error } = await supabaseClient.storage.from(BUCKET).createSignedUrl(name, 60);
+      if (error) { setStatus('Could not generate download link', 'error'); return; }
+      window.open(data.signedUrl, '_blank');
+    }
+
+    if (action === 'delete') {
+      if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+      const { error } = await supabaseClient.storage.from(BUCKET).remove([name]);
+      if (error) { setStatus('Delete failed', 'error'); return; }
+      setStatus('File deleted', 'ok');
+      loadFiles();
+    }
+  });
+
+  async function uploadFiles(fileArray) {
+    progressEl.innerHTML = '';
+    for (const file of fileArray) {
+      const row = document.createElement('div');
+      row.className = 'upload-item';
+      row.textContent = `Uploading ${file.name}…`;
+      progressEl.appendChild(row);
+
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['pdf', 'ppt', 'pptx'].includes(ext)) {
+        row.textContent = `Skipped "${file.name}" — only PDF/PPT/PPTX allowed`;
+        row.className = 'upload-item error';
+        continue;
+      }
+
+      const path = `${Date.now()}_${file.name}`;
+      const { error } = await supabaseClient.storage.from(BUCKET).upload(path, file);
+      if (error) {
+        row.textContent = `Failed to upload "${file.name}": ${error.message}`;
+        row.className = 'upload-item error';
+      } else {
+        row.textContent = `Uploaded "${file.name}"`;
+        row.className = 'upload-item ok';
+      }
+    }
+    loadFiles();
+    setTimeout(() => { progressEl.innerHTML = ''; }, 5000);
+  }
+
+  const uploadBtn = document.getElementById('uploadBtn');
+  uploadBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) uploadFiles(Array.from(e.target.files));
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); })
+  );
+  dropzone.addEventListener('drop', (e) => {
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) uploadFiles(files);
+  });
+
+  loadFiles();
+</script>
+</body>
+</html>
